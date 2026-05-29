@@ -63,7 +63,7 @@ Sophus Installation for the non-templated/double-only version.
 ```bash
 git clone https://github.com/strasdat/Sophus.git
 cd Sophus
-git checkout a621ff
+# git checkout a621ff 版本太老，因NX的烧录中的 `Eigen` 库比较新，在编译时会出现报错，所以可用新版本的 `Eigen` n库，但注意还需修改 `rpg_vikit` 的 `CMakeLists.txt`
 mkdir build && cd build && cmake ..
 make
 sudo make install
