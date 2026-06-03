@@ -26,6 +26,7 @@ which is included as part of this source code package.
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <vikit/camera_loader.h>
+#include <Eigen/Geometry>
 
 class LIVMapper
 {
@@ -78,6 +79,7 @@ public:
   string lid_topic, imu_topic, seq_name, img_topic;
   V3D extT;
   M3D extR;
+  Eigen::Isometry3d T_imu_base = Eigen::Isometry3d::Identity(); // IMU→base_link transform
 
   int feats_down_size = 0, max_iterations = 0;
 

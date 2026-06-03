@@ -45,7 +45,7 @@ LIVMapper::LIVMapper(rclcpp::Node::SharedPtr &node, std::string node_name, const
   initializeFiles();
   initializeComponents(this->node);          // initialize components errors
   path.header.stamp = this->node->now();
-  path.header.frame_id = "camera_init";
+  path.header.frame_id = "odom";
 }
 
 LIVMapper::~LIVMapper() {}
@@ -114,6 +114,7 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node)
   try_declare.template operator()<double>("pcd_save.filter_size_pcd", 0.5);
   try_declare.template operator()<vector<double>>("extrin_calib.extrinsic_T", vector<double>{});
   try_declare.template operator()<vector<double>>("extrin_calib.extrinsic_R", vector<double>{});
+  try_declare.template operator()<vector<double>>("extrin_calib.base_to_imu", vector<double>{0, 0, 0, 0, 0, 0});
   try_declare.template operator()<vector<double>>("extrin_calib.Pcl", vector<double>{});
   try_declare.template operator()<vector<double>>("extrin_calib.Rcl", vector<double>{});
   try_declare.template operator()<double>("debug.plot_time", -10);
@@ -172,6 +173,30 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node)
   this->node->get_parameter("pcd_save.filter_size_pcd", filter_size_pcd);
   this->node->get_parameter("extrin_calib.extrinsic_T", extrinT);
   this->node->get_parameter("extrin_calib.extrinsic_R", extrinR);
+
+  // Load base→IMU transform and compute IMU→base for output composition.
+  // YAML 约定 base_to_imu = [x, y, z, yaw, pitch, roll]，单位：米 / 弧度。
+  // 旋转按 ZYX 顺序（yaw 绕 Z、pitch 绕 Y、roll 绕 X）合成。
+  std::vector<double> base_to_imu_vec;
+  this->node->get_parameter("extrin_calib.base_to_imu", base_to_imu_vec);
+  if (base_to_imu_vec.size() == 6) {
+    Eigen::Vector3d b2t(base_to_imu_vec[0], base_to_imu_vec[1], base_to_imu_vec[2]);
+    double yaw = base_to_imu_vec[3], pitch = base_to_imu_vec[4], roll = base_to_imu_vec[5];
+    Eigen::AngleAxisd rz(yaw, Eigen::Vector3d::UnitZ());
+    Eigen::AngleAxisd ry(pitch, Eigen::Vector3d::UnitY());
+    Eigen::AngleAxisd rx(roll, Eigen::Vector3d::UnitX());
+    Eigen::Isometry3d T_base_imu = Eigen::Isometry3d::Identity();
+    T_base_imu.translation() = b2t;
+    T_base_imu.linear() = (rz * ry * rx).matrix();
+
+    T_imu_base = T_base_imu.inverse();
+
+    printf("[ LIVMapper ] Loaded base_to_imu: translation [%.3f, %.3f, %.3f], ypr [%.3f, %.3f, %.3f]\n",
+      b2t(0), b2t(1), b2t(2), yaw, pitch, roll);
+    printf("[ LIVMapper ] Computed imu_to_base: translation = [%.3f, %.3f, %.3f]\n",
+      T_imu_base.translation()(0), T_imu_base.translation()(1), T_imu_base.translation()(2));
+  }
+
   this->node->get_parameter("extrin_calib.Pcl", cameraextrinT);
   this->node->get_parameter("extrin_calib.Rcl", cameraextrinR);
   this->node->get_parameter("debug.plot_time", plot_time);
@@ -1187,7 +1212,7 @@ void LIVMapper::publish_img_rgb(const image_transport::Publisher &pubImage, VIOM
   cv::Mat img_rgb = vio_manager->img_cp;
   cv_bridge::CvImage out_msg;
   out_msg.header.stamp = this->node->get_clock()->now();
-  // out_msg.header.frame_id = "camera_init";
+  // out_msg.header.frame_id = "odom";
   out_msg.encoding = sensor_msgs::image_encodings::BGR8;
   out_msg.image = img_rgb;
   pubImage.publish(out_msg.toImageMsg());
@@ -1254,7 +1279,7 @@ void LIVMapper::publish_frame_world(const rclcpp::Publisher<sensor_msgs::msg::Po
     pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg); 
   }
   laserCloudmsg.header.stamp = this->node->get_clock()->now(); //.fromSec(last_timestamp_lidar);
-  laserCloudmsg.header.frame_id = "camera_init";
+  laserCloudmsg.header.frame_id = "odom";
   pubLaserCloudFullRes->publish(laserCloudmsg);
 
   /**************** save map ****************/
@@ -1293,10 +1318,10 @@ void LIVMapper::publish_frame_world(const rclcpp::Publisher<sensor_msgs::msg::Po
         {
           pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_intensity);
           PointCloudXYZI().swap(*pcl_wait_save_intensity);
-        }        
+        }
         Eigen::Quaterniond q(_state.rot_end);
         fout_pcd_pos << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " " << q.w() << " " << q.x() << " " << q.y()
-                     << " " << q.z() << " " << endl;
+          << " " << q.z() << " " << endl;
         scan_wait_num = 0;
       }
     }
@@ -1316,7 +1341,7 @@ void LIVMapper::publish_visual_sub_map(const rclcpp::Publisher<sensor_msgs::msg:
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*sub_pcl_visual_map_pub, laserCloudmsg);
     laserCloudmsg.header.stamp = this->node->get_clock()->now();
-    laserCloudmsg.header.frame_id = "camera_init";
+    laserCloudmsg.header.frame_id = "odom";
     pubSubVisualMap->publish(laserCloudmsg);
   }
 }
@@ -1334,7 +1359,7 @@ void LIVMapper::publish_effect_world(const rclcpp::Publisher<sensor_msgs::msg::P
   sensor_msgs::msg::PointCloud2 laserCloudFullRes3;
   pcl::toROSMsg(*laserCloudWorld, laserCloudFullRes3);
   laserCloudFullRes3.header.stamp = this->node->get_clock()->now();
-  laserCloudFullRes3.header.frame_id = "camera_init";
+  laserCloudFullRes3.header.frame_id = "odom";
   pubLaserCloudEffect->publish(laserCloudFullRes3);
 }
 
@@ -1351,29 +1376,45 @@ template <typename T> void LIVMapper::set_posestamp(T &out)
 
 void LIVMapper::publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr &pubOdomAftMapped)
 {
-  odomAftMapped.header.frame_id = "camera_init";
-  odomAftMapped.child_frame_id = "aft_mapped";
-  odomAftMapped.header.stamp = this->node->get_clock()->now(); //.ros::Time()fromSec(last_timestamp_lidar);
+  odomAftMapped.header.frame_id = "odom";
+  odomAftMapped.child_frame_id = "base_link";
+  odomAftMapped.header.stamp = this->node->get_clock()->now();
   set_posestamp(odomAftMapped.pose.pose);
+
+  // Compose T_odom_base = T_odom_imu * T_imu_base
+  Eigen::Isometry3d T_odom_imu = Eigen::Isometry3d::Identity();
+  T_odom_imu.translation() = _state.pos_end;
+  T_odom_imu.linear() = Eigen::Quaterniond(geoQuat.w, geoQuat.x, geoQuat.y, geoQuat.z).toRotationMatrix();
+  Eigen::Isometry3d T_odom_base = T_odom_imu * T_imu_base;
+
+  Eigen::Vector3d pos = T_odom_base.translation();
+  Eigen::Quaterniond q(T_odom_base.linear());
+  odomAftMapped.pose.pose.position.x = pos(0);
+  odomAftMapped.pose.pose.position.y = pos(1);
+  odomAftMapped.pose.pose.position.z = pos(2);
+  odomAftMapped.pose.pose.orientation.x = q.x();
+  odomAftMapped.pose.pose.orientation.y = q.y();
+  odomAftMapped.pose.pose.orientation.z = q.z();
+  odomAftMapped.pose.pose.orientation.w = q.w();
 
   static std::shared_ptr<tf2_ros::TransformBroadcaster> br;
   br = std::make_shared<tf2_ros::TransformBroadcaster>(this->node);
   tf2::Transform transform;
-  tf2::Quaternion q;
-  transform.setOrigin(tf2::Vector3(_state.pos_end(0), _state.pos_end(1), _state.pos_end(2)));
-  q.setW(geoQuat.w);
-  q.setX(geoQuat.x);
-  q.setY(geoQuat.y);
-  q.setZ(geoQuat.z);
-  transform.setRotation(q);
-  br->sendTransform(geometry_msgs::msg::TransformStamped(createTransformStamped(transform, odomAftMapped.header.stamp, "camera_init", "aft_mapped")));
+  tf2::Quaternion tf_q;
+  transform.setOrigin(tf2::Vector3(pos(0), pos(1), pos(2)));
+  tf_q.setW(q.w());
+  tf_q.setX(q.x());
+  tf_q.setY(q.y());
+  tf_q.setZ(q.z());
+  transform.setRotation(tf_q);
+  br->sendTransform(geometry_msgs::msg::TransformStamped(createTransformStamped(transform, odomAftMapped.header.stamp, "odom", "base_link")));
   pubOdomAftMapped->publish(odomAftMapped);
 }
 
 void LIVMapper::publish_mavros(const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr &mavros_pose_publisher)
 {
   msg_body_pose.header.stamp = this->node->get_clock()->now();
-  msg_body_pose.header.frame_id = "camera_init";
+  msg_body_pose.header.frame_id = "odom";
   set_posestamp(msg_body_pose.pose);
   mavros_pose_publisher->publish(msg_body_pose);
 }
@@ -1382,7 +1423,7 @@ void LIVMapper::publish_path(const rclcpp::Publisher<nav_msgs::msg::Path>::Share
 {
   set_posestamp(msg_body_pose.pose);
   msg_body_pose.header.stamp = this->node->get_clock()->now();
-  msg_body_pose.header.frame_id = "camera_init";
+  msg_body_pose.header.frame_id = "odom";
   path.poses.push_back(msg_body_pose);
   pubPath->publish(path);
 }
