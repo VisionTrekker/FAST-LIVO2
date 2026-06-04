@@ -1374,13 +1374,8 @@ template <typename T> void LIVMapper::set_posestamp(T &out)
   out.orientation.w = geoQuat.w;
 }
 
-void LIVMapper::publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr &pubOdomAftMapped)
+void LIVMapper::composeBasePose(geometry_msgs::msg::Pose & pose)
 {
-  odomAftMapped.header.frame_id = "odom";
-  odomAftMapped.child_frame_id = "base_link";
-  odomAftMapped.header.stamp = this->node->get_clock()->now();
-  set_posestamp(odomAftMapped.pose.pose);
-
   // Compose T_odom_base = T_odom_imu * T_imu_base
   Eigen::Isometry3d T_odom_imu = Eigen::Isometry3d::Identity();
   T_odom_imu.translation() = _state.pos_end;
@@ -1389,23 +1384,31 @@ void LIVMapper::publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry
 
   Eigen::Vector3d pos = T_odom_base.translation();
   Eigen::Quaterniond q(T_odom_base.linear());
-  odomAftMapped.pose.pose.position.x = pos(0);
-  odomAftMapped.pose.pose.position.y = pos(1);
-  odomAftMapped.pose.pose.position.z = pos(2);
-  odomAftMapped.pose.pose.orientation.x = q.x();
-  odomAftMapped.pose.pose.orientation.y = q.y();
-  odomAftMapped.pose.pose.orientation.z = q.z();
-  odomAftMapped.pose.pose.orientation.w = q.w();
+  pose.position.x = pos(0);
+  pose.position.y = pos(1);
+  pose.position.z = pos(2);
+  pose.orientation.x = q.x();
+  pose.orientation.y = q.y();
+  pose.orientation.z = q.z();
+  pose.orientation.w = q.w();
+}
+
+void LIVMapper::publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr &pubOdomAftMapped)
+{
+  odomAftMapped.header.frame_id = "odom";
+  odomAftMapped.child_frame_id = "base_link";
+  odomAftMapped.header.stamp = this->node->get_clock()->now();
+  composeBasePose(odomAftMapped.pose.pose);
 
   static std::shared_ptr<tf2_ros::TransformBroadcaster> br;
   br = std::make_shared<tf2_ros::TransformBroadcaster>(this->node);
   tf2::Transform transform;
   tf2::Quaternion tf_q;
-  transform.setOrigin(tf2::Vector3(pos(0), pos(1), pos(2)));
-  tf_q.setW(q.w());
-  tf_q.setX(q.x());
-  tf_q.setY(q.y());
-  tf_q.setZ(q.z());
+  transform.setOrigin(tf2::Vector3(odomAftMapped.pose.pose.position.x, odomAftMapped.pose.pose.position.y, odomAftMapped.pose.pose.position.z));
+  tf_q.setW(odomAftMapped.pose.pose.orientation.w);
+  tf_q.setX(odomAftMapped.pose.pose.orientation.x);
+  tf_q.setY(odomAftMapped.pose.pose.orientation.y);
+  tf_q.setZ(odomAftMapped.pose.pose.orientation.z);
   transform.setRotation(tf_q);
   br->sendTransform(geometry_msgs::msg::TransformStamped(createTransformStamped(transform, odomAftMapped.header.stamp, "odom", "base_link")));
   pubOdomAftMapped->publish(odomAftMapped);
@@ -1415,13 +1418,13 @@ void LIVMapper::publish_mavros(const rclcpp::Publisher<geometry_msgs::msg::PoseS
 {
   msg_body_pose.header.stamp = this->node->get_clock()->now();
   msg_body_pose.header.frame_id = "odom";
-  set_posestamp(msg_body_pose.pose);
+  composeBasePose(msg_body_pose.pose);
   mavros_pose_publisher->publish(msg_body_pose);
 }
 
 void LIVMapper::publish_path(const rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr &pubPath)
 {
-  set_posestamp(msg_body_pose.pose);
+  composeBasePose(msg_body_pose.pose);
   msg_body_pose.header.stamp = this->node->get_clock()->now();
   msg_body_pose.header.frame_id = "odom";
   path.poses.push_back(msg_body_pose);
