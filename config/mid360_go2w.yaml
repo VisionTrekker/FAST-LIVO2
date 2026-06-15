@@ -80,6 +80,7 @@
       pub_plane_en: false
       pub_scan_num: 1
       blind_rgb_points: 0.0
+      publish_mavros_pose: false
 
     evo:
       seq_name: "go2w_outdoor"
