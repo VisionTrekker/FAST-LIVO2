@@ -45,7 +45,7 @@ LIVMapper::LIVMapper(rclcpp::Node::SharedPtr &node, std::string node_name, const
   initializeFiles();
   initializeComponents(this->node);          // initialize components errors
   path.header.stamp = this->node->now();
-  path.header.frame_id = "odom";
+  path.header.frame_id = "slam_odom";
 }
 
 LIVMapper::~LIVMapper() {}
@@ -1285,7 +1285,7 @@ void LIVMapper::publish_frame_world(const rclcpp::Publisher<sensor_msgs::msg::Po
     pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg); 
   }
   laserCloudmsg.header.stamp = this->node->get_clock()->now(); //.fromSec(last_timestamp_lidar);
-  laserCloudmsg.header.frame_id = "odom";
+  laserCloudmsg.header.frame_id = "slam_odom";
   pubLaserCloudFullRes->publish(laserCloudmsg);
 
   /**************** save map ****************/
@@ -1347,7 +1347,7 @@ void LIVMapper::publish_visual_sub_map(const rclcpp::Publisher<sensor_msgs::msg:
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*sub_pcl_visual_map_pub, laserCloudmsg);
     laserCloudmsg.header.stamp = this->node->get_clock()->now();
-    laserCloudmsg.header.frame_id = "odom";
+    laserCloudmsg.header.frame_id = "slam_odom";
     pubSubVisualMap->publish(laserCloudmsg);
   }
 }
@@ -1365,7 +1365,7 @@ void LIVMapper::publish_effect_world(const rclcpp::Publisher<sensor_msgs::msg::P
   sensor_msgs::msg::PointCloud2 laserCloudFullRes3;
   pcl::toROSMsg(*laserCloudWorld, laserCloudFullRes3);
   laserCloudFullRes3.header.stamp = this->node->get_clock()->now();
-  laserCloudFullRes3.header.frame_id = "odom";
+  laserCloudFullRes3.header.frame_id = "slam_odom";
   pubLaserCloudEffect->publish(laserCloudFullRes3);
 }
 
@@ -1401,8 +1401,8 @@ void LIVMapper::composeBasePose(geometry_msgs::msg::Pose & pose)
 
 void LIVMapper::publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr &pubOdomAftMapped)
 {
-  odomAftMapped.header.frame_id = "odom";
-  odomAftMapped.child_frame_id = "base_link";
+  odomAftMapped.header.frame_id = "slam_odom";
+  odomAftMapped.child_frame_id = "slam_base_link";
   odomAftMapped.header.stamp = this->node->get_clock()->now();
   composeBasePose(odomAftMapped.pose.pose);
 
@@ -1416,14 +1416,14 @@ void LIVMapper::publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry
   tf_q.setY(odomAftMapped.pose.pose.orientation.y);
   tf_q.setZ(odomAftMapped.pose.pose.orientation.z);
   transform.setRotation(tf_q);
-  br->sendTransform(geometry_msgs::msg::TransformStamped(createTransformStamped(transform, odomAftMapped.header.stamp, "odom", "base_link")));
+  br->sendTransform(geometry_msgs::msg::TransformStamped(createTransformStamped(transform, odomAftMapped.header.stamp, "slam_odom", "slam_base_link")));
   pubOdomAftMapped->publish(odomAftMapped);
 }
 
 void LIVMapper::publish_mavros(const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr &mavros_pose_publisher)
 {
   msg_body_pose.header.stamp = this->node->get_clock()->now();
-  msg_body_pose.header.frame_id = "odom";
+  msg_body_pose.header.frame_id = "slam_odom";
   composeBasePose(msg_body_pose.pose);
   mavros_pose_publisher->publish(msg_body_pose);
 }
@@ -1432,7 +1432,7 @@ void LIVMapper::publish_path(const rclcpp::Publisher<nav_msgs::msg::Path>::Share
 {
   composeBasePose(msg_body_pose.pose);
   msg_body_pose.header.stamp = this->node->get_clock()->now();
-  msg_body_pose.header.frame_id = "odom";
+  msg_body_pose.header.frame_id = "slam_odom";
   path.poses.push_back(msg_body_pose);
   pubPath->publish(path);
 }
